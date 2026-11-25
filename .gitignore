@@ -1,0 +1,46 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Build / coverage
+*.out
+*.prof
+*.coverprofile
+coverage.html
+coverage.txt
+
+# Go workspace (local only)
+go.work
+go.work.sum
+
+# Dependency / module cache (if vendored locally by mistake)
+/vendor/
+
+# Runtime data
+*.db
+*.db-journal
+
+# Env and secrets
+.env
+.env.*
+!.env.example
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project-specific
+test/e2e/.state/
