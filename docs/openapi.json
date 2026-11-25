@@ -1,0 +1,849 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "To-do service",
+    "version": "1.0.0",
+    "description": "REST API for to-do items.\n\nSuccessful responses are `application/json` envelopes: `success` (boolean),\n`message`, and `data`. Errors are `application/problem+json` (RFC 9457)\nwith `type` `about:blank`.\n\nEvery response includes `X-Request-ID`. The same id is on the request log line.\n\n`GET /livez` and `GET /readyz` are unversioned probes and are not rate limited.\nOther routes, including this document, share a per-process token bucket\nof 10 requests, refilling at 1 token per second. The bucket key is the\nhost of the connection address.\n"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local process"
+    }
+  ],
+  "tags": [
+    {
+      "name": "todos",
+      "description": "To-do items. The client-facing id is a UUID."
+    },
+    {
+      "name": "meta",
+      "description": "API description and process probes."
+    }
+  ],
+  "paths": {
+    "/v1/todos": {
+      "get": {
+        "tags": [
+          "todos"
+        ],
+        "operationId": "listTodos",
+        "summary": "List to-dos",
+        "responses": {
+          "200": {
+            "description": "The items stored in this process, in public-id key order. The array is empty when none exist.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoListEnvelope"
+                },
+                "example": {
+                  "success": true,
+                  "message": "todos retrieved",
+                  "data": []
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "todos"
+        ],
+        "operationId": "createTodo",
+        "summary": "Create a to-do",
+        "description": "Requires a UUID `Idempotency-Key`. The first request inserts the item and\nreturns 201. A later request with the same key returns 200 and the\noriginal item, including when the body differs. A blank title is\nrejected before the key is looked up.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoWrite"
+              },
+              "example": {
+                "title": "buy milk",
+                "completed": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The item was stored.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              },
+              "Location": {
+                "description": "Path of the created item.",
+                "schema": {
+                  "type": "string",
+                  "example": "/v1/todos/0bcdbae1-c2e2-40f7-8ee3-d11fdf286055"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoEnvelope"
+                },
+                "example": {
+                  "success": true,
+                  "message": "todo created",
+                  "data": {
+                    "id": "0bcdbae1-c2e2-40f7-8ee3-d11fdf286055",
+                    "title": "buy milk",
+                    "completed": false
+                  }
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "This idempotency key was already used. The body is the original item.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              },
+              "Location": {
+                "description": "Path of the original item.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoEnvelope"
+                },
+                "example": {
+                  "success": true,
+                  "message": "todo already created",
+                  "data": {
+                    "id": "0bcdbae1-c2e2-40f7-8ee3-d11fdf286055",
+                    "title": "buy milk",
+                    "completed": false
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The idempotency key is missing or not a UUID, or the body is not the expected JSON.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "examples": {
+                  "missingKey": {
+                    "summary": "Missing idempotency key",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "Idempotency-Key header is required",
+                      "instance": "/v1/todos"
+                    }
+                  },
+                  "invalidKey": {
+                    "summary": "Idempotency key is not a UUID",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "Idempotency-Key must be a UUID",
+                      "instance": "/v1/todos"
+                    }
+                  },
+                  "badJSON": {
+                    "summary": "Malformed JSON or an unknown field",
+                    "value": {
+                      "type": "about:blank",
+                      "title": "Bad Request",
+                      "status": 400,
+                      "detail": "request body must be valid JSON with only title and completed",
+                      "instance": "/v1/todos"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/BodyTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/BlankTitle"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/todos/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TodoID"
+        }
+      ],
+      "put": {
+        "tags": [
+          "todos"
+        ],
+        "operationId": "replaceTodo",
+        "summary": "Replace a to-do",
+        "description": "Replaces `title` and `completed`. The public id is unchanged.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoWrite"
+              },
+              "example": {
+                "title": "buy oats",
+                "completed": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The item was replaced.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoEnvelope"
+                },
+                "example": {
+                  "success": true,
+                  "message": "todo updated",
+                  "data": {
+                    "id": "0bcdbae1-c2e2-40f7-8ee3-d11fdf286055",
+                    "title": "buy oats",
+                    "completed": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadJSON"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "413": {
+            "$ref": "#/components/responses/BodyTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/BlankTitle"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "todos"
+        ],
+        "operationId": "deleteTodo",
+        "summary": "Delete a to-do",
+        "responses": {
+          "200": {
+            "description": "The item was deleted. `data` is null.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyEnvelope"
+                },
+                "example": {
+                  "success": true,
+                  "message": "todo deleted",
+                  "data": null
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/docs/": {
+      "get": {
+        "tags": ["meta"],
+        "operationId": "getOpenAPIUI",
+        "summary": "Swagger UI",
+        "description": "HTML page that renders the document from `GET /v1/openapi.json`. Static assets are served under this path.",
+        "responses": {
+          "200": {
+            "description": "Swagger UI.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "operationId": "getOpenAPI",
+        "summary": "OpenAPI document",
+        "description": "Returns this document. The body is the file `docs/openapi.json`. The Swagger UI is at `/v1/docs/`.",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/livez": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "operationId": "getLiveness",
+        "summary": "Liveness probe",
+        "description": "Reports that the process is running. It does not check storage and it is not rate limited.",
+        "responses": {
+          "200": {
+            "description": "The process is live.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthEnvelope"
+                },
+                "example": {
+                  "success": true,
+                  "message": "service is live",
+                  "data": {
+                    "status": "live"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "operationId": "getReadiness",
+        "summary": "Readiness probe",
+        "description": "Reports that this process can open its own BoltDB buckets. It is not rate limited.",
+        "responses": {
+          "200": {
+            "description": "Storage is reachable in this process.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthEnvelope"
+                },
+                "example": {
+                  "success": true,
+                  "message": "service is ready",
+                  "data": {
+                    "status": "ready"
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Storage is missing or the ping failed.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                "example": {
+                  "type": "about:blank",
+                  "title": "Service Unavailable",
+                  "status": 503,
+                  "detail": "storage is unavailable",
+                  "instance": "/readyz"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "meta"
+        ],
+        "operationId": "getHealth",
+        "summary": "Process health",
+        "description": "Reports that the process is running. This route is rate limited.",
+        "responses": {
+          "200": {
+            "description": "The process is healthy.",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/RequestID"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthEnvelope"
+                },
+                "example": {
+                  "success": true,
+                  "message": "service is healthy",
+                  "data": {
+                    "status": "healthy"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Caller-chosen UUID. The same key returns the original create.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "TodoID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Public id of the to-do.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "headers": {
+      "RequestID": {
+        "description": "Identifier for this request.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "schemas": {
+      "Todo": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "completed"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Public id. The internal sequence is not returned."
+          },
+          "title": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TodoWrite": {
+        "type": "object",
+        "required": [
+          "title",
+          "completed"
+        ],
+        "additionalProperties": false,
+        "description": "The only accepted fields are `title` and `completed`. `title` is\ntrimmed and must not be blank. A body larger than 1 MiB is rejected.\n",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "completed": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TodoEnvelope": {
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/Todo"
+          }
+        }
+      },
+      "TodoListEnvelope": {
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "message": {
+            "type": "string",
+            "example": "todos retrieved"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Todo"
+            }
+          }
+        }
+      },
+      "EmptyEnvelope": {
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "message": {
+            "type": "string",
+            "example": "todo deleted"
+          },
+          "data": {
+            "nullable": true,
+            "example": null
+          }
+        }
+      },
+      "HealthEnvelope": {
+        "type": "object",
+        "required": [
+          "success",
+          "message",
+          "data"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "live",
+                  "ready",
+                  "healthy"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "instance"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "example": "about:blank"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadJSON": {
+        "description": "The body is not JSON, or it contains a field other than title and completed.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestID"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "about:blank",
+              "title": "Bad Request",
+              "status": 400,
+              "detail": "request body must be valid JSON with only title and completed",
+              "instance": "/v1/todos"
+            }
+          }
+        }
+      },
+      "BodyTooLarge": {
+        "description": "The body is larger than 1 MiB.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestID"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "about:blank",
+              "title": "Request Entity Too Large",
+              "status": 413,
+              "detail": "request body too large",
+              "instance": "/v1/todos"
+            }
+          }
+        }
+      },
+      "BlankTitle": {
+        "description": "The title is missing or blank after trimming.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestID"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "about:blank",
+              "title": "Unprocessable Entity",
+              "status": 422,
+              "detail": "title is required",
+              "instance": "/v1/todos"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No to-do exists for this public id in this process.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestID"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "about:blank",
+              "title": "Not Found",
+              "status": 404,
+              "detail": "todo not found",
+              "instance": "/v1/todos/0bcdbae1-c2e2-40f7-8ee3-d11fdf286055"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "The client has spent its token bucket.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestID"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "about:blank",
+              "title": "Too Many Requests",
+              "status": 429,
+              "detail": "rate limit exceeded",
+              "instance": "/v1/todos"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "The process failed. The response detail is generic. The cause is in the log.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/RequestID"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            },
+            "example": {
+              "type": "about:blank",
+              "title": "Internal Server Error",
+              "status": 500,
+              "detail": "internal error",
+              "instance": "/v1/todos"
+            }
+          }
+        }
+      }
+    }
+  }
+}
