@@ -1,0 +1,17 @@
+# Default deny: once any NetworkPolicy selects these Pods, only explicitly
+# allowed traffic is admitted. Empty ingress/egress rules allow nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: todo-service-deny-all
+  labels:
+    app: todo-service
+spec:
+  podSelector:
+    matchLabels:
+      app: todo-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []

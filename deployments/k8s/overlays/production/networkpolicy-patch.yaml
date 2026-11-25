@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: todo-service-deny-all
+spec:
+  podSelector:
+    matchLabels:
+      app: todo-service
+  policyTypes:
+    - Ingress
+    - Egress
+  # Allow HTTP from the nginx Ingress controller; everything else stays denied.
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress: []
