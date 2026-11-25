@@ -28,7 +28,7 @@ func requestLog(next http.Handler) http.Handler {
 		r = r.WithContext(logger.NewContext(r.Context(), l))
 		w.Header().Set("X-Request-ID", id)
 
-		if r.URL.Path != "/livez" && r.URL.Path != "/readyz" {
+		if r.URL.Path != "/livez" && r.URL.Path != "/readyz" && !strings.Contains(r.URL.Path, "/v1/docs") {
 			l.Info("request received", map[string]any{
 				"method": r.Method,
 				"path":   r.URL.Path,
