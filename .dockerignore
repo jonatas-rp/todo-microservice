@@ -14,5 +14,6 @@ dist/
 *.test
 .dockerignore
 Dockerfile
+Dockerfile.store
 test/e2e/.state/
 scripts/
