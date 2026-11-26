@@ -14,6 +14,7 @@ import (
 	"todo-service/internal/logger"
 	"todo-service/internal/ratelimit"
 	"todo-service/internal/storage"
+	storeclient "todo-service/internal/store/client"
 	"todo-service/internal/todo"
 )
 
@@ -37,18 +38,18 @@ func run(log *logger.Logger) error {
 	logger.SetLevel(level)
 	log = log.WithLevel(level)
 
-	store, err := storage.Open(cfg.DBPath)
+	repo, err := storeclient.Dial(context.Background(), cfg.StoreAddr)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer repo.Close()
 
-	svc := todo.New(store)
+	svc := todo.New(repo)
 	lim := ratelimit.New(storage.NewMemory(), 10, 1)
 	readiness := httpapi.NewReadiness()
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.NewHandler(svc, store, lim, readiness),
+		Handler:           httpapi.NewHandler(svc, repo, lim, readiness, cfg.PathPrefix),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -58,7 +59,13 @@ func run(log *logger.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("listening", map[string]any{"addr": cfg.Addr, "db": cfg.DBPath, "log_level": cfg.LogLevel})
+		log.Info("listening", map[string]any{
+			"addr":        cfg.Addr,
+			"db":          cfg.DBPath,
+			"store":       cfg.StoreAddr,
+			"path_prefix": cfg.PathPrefix,
+			"log_level":   cfg.LogLevel,
+		})
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -76,3 +83,8 @@ func run(log *logger.Logger) error {
 		return srv.Shutdown(shutdownCtx)
 	}
 }
+
+var (
+	_ httpapi.Pinger  = (*storeclient.Client)(nil)
+	_ todo.Repository = (*storeclient.Client)(nil)
+)

@@ -40,7 +40,7 @@ type problem struct {
 
 func TestTodoAPI(t *testing.T) {
 	store := openStore(t)
-	handler := httpapi.NewHandler(todo.New(store), store, allowAll(), httpapi.NewReadiness())
+	handler := httpapi.NewHandler(todo.New(store), store, allowAll(), httpapi.NewReadiness(), "")
 
 	for _, path := range []string{"/livez", "/readyz", "/health"} {
 		rec := request(t, handler, http.MethodGet, path, "")
@@ -94,7 +94,7 @@ func TestTodoAPI(t *testing.T) {
 
 func TestIdempotencyKey(t *testing.T) {
 	store := openStore(t)
-	handler := httpapi.NewHandler(todo.New(store), store, allowAll(), httpapi.NewReadiness())
+	handler := httpapi.NewHandler(todo.New(store), store, allowAll(), httpapi.NewReadiness(), "")
 
 	rec := requestWithKey(t, handler, http.MethodPost, "/v1/todos", `{"title":"buy milk"}`, "")
 	if p := decodeProblem(t, rec, http.StatusBadRequest); p.Detail != "Idempotency-Key header is required" {
@@ -124,7 +124,7 @@ func TestIdempotencyKey(t *testing.T) {
 
 func TestTodoAPIErrors(t *testing.T) {
 	store := openStore(t)
-	handler := httpapi.NewHandler(todo.New(store), store, allowAll(), httpapi.NewReadiness())
+	handler := httpapi.NewHandler(todo.New(store), store, allowAll(), httpapi.NewReadiness(), "")
 
 	tests := []struct {
 		name   string
@@ -157,7 +157,7 @@ func TestTodoAPIErrors(t *testing.T) {
 }
 
 func TestOpenAPI(t *testing.T) {
-	handler := httpapi.NewHandler(todo.New(openStore(t)), nil, allowAll(), httpapi.NewReadiness())
+	handler := httpapi.NewHandler(todo.New(openStore(t)), nil, allowAll(), httpapi.NewReadiness(), "")
 	rec := request(t, handler, http.MethodGet, "/v1/openapi.json", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
@@ -185,12 +185,43 @@ func TestOpenAPI(t *testing.T) {
 	}
 }
 
+func TestDocsPublicPrefix(t *testing.T) {
+	handler := httpapi.NewHandler(todo.New(openStore(t)), nil, allowAll(), httpapi.NewReadiness(), "/dev")
+	ui := request(t, handler, http.MethodGet, "/v1/docs/", "")
+	if ui.Code != http.StatusOK {
+		t.Fatalf("docs status = %d, body %s", ui.Code, ui.Body)
+	}
+	if !strings.Contains(ui.Body.String(), "/dev/v1/docs/swagger-ui.css") || !strings.Contains(ui.Body.String(), "/dev/v1/openapi.json") {
+		t.Fatalf("docs body = %s", ui.Body)
+	}
+	asset := request(t, handler, http.MethodGet, "/v1/docs/swagger-ui.css", "")
+	if asset.Code != http.StatusOK {
+		t.Fatalf("asset status = %d", asset.Code)
+	}
+
+	spec := request(t, handler, http.MethodGet, "/v1/openapi.json", "")
+	if spec.Code != http.StatusOK {
+		t.Fatalf("openapi status = %d, body %s", spec.Code, spec.Body)
+	}
+	var doc struct {
+		Servers []struct {
+			URL string `json:"url"`
+		} `json:"servers"`
+	}
+	if err := json.Unmarshal(spec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Servers) != 1 || doc.Servers[0].URL != "/dev" {
+		t.Fatalf("servers = %+v", doc.Servers)
+	}
+}
+
 func TestReadyzWhenClosed(t *testing.T) {
 	store, err := storage.Open(filepath.Join(t.TempDir(), "todos.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := httpapi.NewHandler(todo.New(store), store, allowAll(), httpapi.NewReadiness())
+	handler := httpapi.NewHandler(todo.New(store), store, allowAll(), httpapi.NewReadiness(), "")
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}

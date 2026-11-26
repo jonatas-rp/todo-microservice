@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -25,7 +26,8 @@ func requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := uuid.NewString()
 		l := logger.New(requestLogWriter, id)
-		r = r.WithContext(logger.NewContext(r.Context(), l))
+		ctx := context.WithValue(r.Context(), "request_id", id)
+		r = r.WithContext(logger.NewContext(ctx, l))
 		w.Header().Set("X-Request-ID", id)
 
 		if r.URL.Path != "/livez" && r.URL.Path != "/readyz" && !strings.Contains(r.URL.Path, "/v1/docs") {

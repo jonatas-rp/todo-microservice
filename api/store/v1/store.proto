@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package store.v1;
+
+option go_package = "todo-service/internal/store/pb;pb";
+
+// Store is the persistence API. It mirrors todo.Repository plus a readiness ping.
+service Store {
+  rpc List(ListRequest) returns (ListResponse);
+  rpc Create(CreateRequest) returns (CreateResponse);
+  rpc Update(UpdateRequest) returns (UpdateResponse);
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+message Todo {
+  uint64 id = 1;
+  string public_id = 2;
+  string title = 3;
+  bool completed = 4;
+}
+
+message ListRequest {
+  string request_id = 1;
+}
+
+message ListResponse {
+  repeated Todo items = 1;
+}
+
+message CreateRequest {
+  Todo item = 1;
+  string idempotency_key = 2;
+  string request_id = 3;
+}
+
+message CreateResponse {
+  Todo stored = 1;
+  bool created = 2;
+}
+
+message UpdateRequest {
+  Todo item = 1;
+  string request_id = 2;
+}
+
+message UpdateResponse {}
+
+message DeleteRequest {
+  string id = 1;
+  string request_id = 2;
+}
+
+message DeleteResponse {}
+
+message PingRequest {}
+
+message PingResponse {}

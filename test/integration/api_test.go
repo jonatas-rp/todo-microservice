@@ -127,7 +127,7 @@ func newHandler(t *testing.T, path string, capacity, perSecond float64) (http.Ha
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	lim := ratelimit.New(storage.NewMemory(), capacity, perSecond)
-	return httpapi.NewHandler(todo.New(store), store, lim, httpapi.NewReadiness()), store
+	return httpapi.NewHandler(todo.New(store), store, lim, httpapi.NewReadiness(), ""), store
 }
 
 func request(t *testing.T, h http.Handler, method, path, body, key string) *httptest.ResponseRecorder {

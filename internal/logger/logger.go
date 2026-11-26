@@ -218,3 +218,11 @@ func FromContext(ctx context.Context) *Logger {
 	}
 	return process
 }
+
+// WithRequestID returns a copy that writes requestID. The receiver is unchanged.
+func (l *Logger) WithRequestID(requestID string) *Logger {
+	if l == nil {
+		return New(os.Stdout, requestID)
+	}
+	return &Logger{w: l.w, requestID: requestID, level: l.level, fields: l.fields}
+}
