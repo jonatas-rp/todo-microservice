@@ -1,3 +1,4 @@
+// Package main opens the BoltDB file and serves the store API over gRPC.
 package main
 
 import (
@@ -26,7 +27,7 @@ func main() {
 	}
 }
 
-func run(log *logger.Logger) error {
+func run(log *logger.Logger) (err error) {
 	cfg, err := config.LoadStore()
 	if err != nil {
 		return err
@@ -42,7 +43,9 @@ func run(log *logger.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() {
+		err = errors.Join(err, store.Close())
+	}()
 
 	lis, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {

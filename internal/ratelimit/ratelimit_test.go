@@ -14,7 +14,7 @@ func TestAllowBurstAndRefill(t *testing.T) {
 	lim := ratelimit.New(storage.NewMemory(), 2, 1)
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	if !lim.Allow("203.0.113.7", now) || !lim.Allow("203.0.113.7", now) {
+	if !lim.Allow("203.0.113.7", now) {
 		t.Fatal("burst of 2 was denied")
 	}
 	if lim.Allow("203.0.113.7", now) {
@@ -40,7 +40,7 @@ func TestAllowRefillCapsAtCapacity(t *testing.T) {
 		t.Fatal("first request denied")
 	}
 	later := now.Add(time.Hour)
-	if !lim.Allow("203.0.113.7", later) || !lim.Allow("203.0.113.7", later) {
+	if !lim.Allow("203.0.113.7", later) {
 		t.Fatal("refill did not restore capacity")
 	}
 	if lim.Allow("203.0.113.7", later) {

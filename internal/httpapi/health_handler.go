@@ -1,3 +1,4 @@
+// Package httpapi serves the to-do HTTP API, the health probes, and the docs UI.
 package httpapi
 
 import (
@@ -13,6 +14,7 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// Readiness records whether this process should receive traffic.
 type Readiness struct {
 	mu    sync.RWMutex
 	ready bool
@@ -22,16 +24,19 @@ type healthStatus struct {
 	Status string `json:"status"`
 }
 
+// NewReadiness returns a Readiness that starts ready.
 func NewReadiness() *Readiness {
 	return &Readiness{ready: true}
 }
 
+// SetReadiness marks the process ready or not ready.
 func (r *Readiness) SetReadiness(ready bool) {
 	r.mu.Lock()
 	r.ready = ready
 	r.mu.Unlock()
 }
 
+// GetReadiness reports whether the process should receive traffic.
 func (r *Readiness) GetReadiness() bool {
 	r.mu.RLock()
 	ready := r.ready

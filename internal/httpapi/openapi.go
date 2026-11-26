@@ -52,7 +52,7 @@ func readOpenAPI() ([]byte, error) {
 	}
 	for {
 		path := filepath.Join(dir, "docs", "openapi.json")
-		raw, err := os.ReadFile(path)
+		raw, err := os.ReadFile(path) // #nosec G304
 		if err == nil {
 			return raw, nil
 		}

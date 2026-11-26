@@ -99,7 +99,7 @@ func TestRequestLog(t *testing.T) {
 	t.Cleanup(func() { requestLogWriter = prev })
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /todos", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /todos", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	h := requestLog(mux)

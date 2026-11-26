@@ -1,3 +1,4 @@
+// Package main serves the to-do HTTP API and dials the store.
 package main
 
 import (
@@ -26,7 +27,7 @@ func main() {
 	}
 }
 
-func run(log *logger.Logger) error {
+func run(log *logger.Logger) (err error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -42,7 +43,9 @@ func run(log *logger.Logger) error {
 	if err != nil {
 		return err
 	}
-	defer repo.Close()
+	defer func() {
+		err = errors.Join(err, repo.Close())
+	}()
 
 	svc := todo.New(repo)
 	lim := ratelimit.New(storage.NewMemory(), 10, 1)

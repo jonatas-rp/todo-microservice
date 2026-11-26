@@ -162,20 +162,20 @@ type response struct {
 }
 
 func runScript(args ...string) error {
-	cmd := exec.Command(scriptPath, args...)
+	cmd := exec.Command(scriptPath, args...) // #nosec G204
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
 func scriptOutput(args ...string) (string, error) {
-	cmd := exec.Command(scriptPath, args...)
+	cmd := exec.Command(scriptPath, args...) // #nosec G204
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
 func loadState(path string) (map[string]string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304
 	if err != nil {
 		return nil, err
 	}
@@ -210,7 +210,12 @@ func do(t *testing.T, method, url, body string, headers map[string]string) respo
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() {
+		err = res.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatal(err)

@@ -20,6 +20,7 @@ import (
 // Level is the minimum severity a Logger will write.
 type Level int
 
+// LevelDebug is the lowest severity. LevelInfo and LevelError follow it.
 const (
 	LevelDebug Level = iota
 	LevelInfo
