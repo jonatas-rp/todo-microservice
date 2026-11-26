@@ -1,0 +1,16 @@
+# Default deny. Overlays allow ingress from the API.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: todo-store
+  labels:
+    app: todo-store
+spec:
+  podSelector:
+    matchLabels:
+      app: todo-store
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []

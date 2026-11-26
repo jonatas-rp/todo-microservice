@@ -1,5 +1,4 @@
-# Challenge requires a Deployment with 2 replicas. BoltDB takes an exclusive
-# file lock, so both Pods cannot usefully share this PVC. See docs/architecture.md.
+# Stateless API replicas. BoltDB lives in the todo-store Deployment.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,6 +7,11 @@ metadata:
     app: todo-service
 spec:
   replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: todo-service
@@ -41,9 +45,6 @@ spec:
             limits:
               cpu: 500m
               memory: 128Mi
-          volumeMounts:
-            - name: data
-              mountPath: /data
           livenessProbe:
             httpGet:
               path: /livez
@@ -60,7 +61,3 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 2
             failureThreshold: 3
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: todo-service-data

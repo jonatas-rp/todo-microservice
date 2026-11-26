@@ -1,0 +1,16 @@
+# Docker Desktop's kubelet cannot mount the Ubuntu project path. This hostPath
+# is the same directory WSL sees through the data symlink: todo-service/data/production.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: todo-store-data-production
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: # TODO: Add the path to the production data directory
+    type: DirectoryOrCreate

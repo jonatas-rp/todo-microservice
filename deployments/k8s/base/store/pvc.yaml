@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: todo-service-data
+  name: todo-store-data
   labels:
-    app: todo-service
+    app: todo-store
 spec:
   accessModes:
     - ReadWriteOnce

@@ -7,5 +7,4 @@ metadata:
 data:
   PORT: "8080"
   LOG_LEVEL: "INFO"
-  # One file per Pod. The StatefulSet mounts a PVC at /data for each replica.
-  DB_PATH: "/data/todos.db"
+  STORE_ADDR: "todo-store:50051"

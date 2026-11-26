@@ -1,24 +1,34 @@
 # Architecture
 
-The to-do service is one Go process. It serves a JSON HTTP API and stores items in a BoltDB file opened by that process. Decisions are recorded in [adr/](adr/README.md).
+The to-do service runs as two processes in Kubernetes. `api-server` serves the JSON HTTP API. `store-server` is the only process that opens the BoltDB file, and every API replica calls it over gRPC. Without `STORE_ADDR`, `api-server` still opens BoltDB itself for local runs and tests. Decisions are recorded in [adr/](adr/README.md).
 
 ## Packages
 
-Dependencies point inward. `internal/todo` does not import HTTP or BoltDB. `cmd/api-server` is the only place that wires concrete types.
+Dependencies point inward. `internal/todo` does not import HTTP, BoltDB, or gRPC. `cmd/api-server` and `cmd/store-server` wire the concrete types.
 
 | Package | Role |
 | --- | --- |
-| `cmd/api-server` | Load config, open the database, build the service, limiter, and handler, shut down on SIGINT or SIGTERM |
-| `internal/config` | `PORT` (default `8080`) and `DB_PATH` (default `todos.db`). The process listens on all interfaces |
+| `cmd/api-server` | Load config, open the local database or dial the store, build the service, limiter, and handler, shut down on SIGINT or SIGTERM |
+| `cmd/store-server` | Open BoltDB, serve the gRPC store, stop gracefully on SIGINT or SIGTERM |
+| `internal/config` | API: `PORT` (default `8080`), `LOG_LEVEL`, optional `STORE_ADDR`. Store: `GRPC_ADDR` (default `:50051`), `DB_PATH` (default `todos.db`) |
 | `internal/todo` | `Todo`, title checks, `Repository` port, use cases |
 | `internal/storage` | BoltDB adapter for `todo.Repository`, and the in-memory adapter for `ratelimit.Store` |
+| `internal/store/pb` | Generated gRPC messages |
+| `internal/store/client` | gRPC client that implements `todo.Repository` |
+| `internal/store/server` | gRPC server in front of the BoltDB adapter |
 | `internal/httpapi` | Routes, JSON envelope, problem details, middleware |
 | `internal/ratelimit` | Token bucket. Capacity 10, refill 1 token per second |
 | `internal/logger` | One JSON line per call. A request logger lives only in that request's context |
 
 ```text
 cmd/api-server
-  → config, logger, storage, ratelimit, todo, httpapi
+  → config, logger, storage or store/client, ratelimit, todo, httpapi
+cmd/store-server
+  → config, logger, storage, store/server
+store/client
+  → store/pb, todo
+store/server
+  → store/pb, storage
 httpapi
   → todo, ratelimit, logger
 storage
@@ -73,69 +83,57 @@ The file has two buckets. `todos` is keyed by the public id and stores `id`, `pu
 
 ## Process
 
-`config.Load` reads the environment. `storage.Open` opens the BoltDB file with mode `0600` and waits up to one second for the file lock, then creates both buckets. The HTTP server uses a 5 second read-header timeout. On SIGINT or SIGTERM the process stops accepting new connections and waits up to 10 seconds for in-flight requests.
+`config.Load` reads the environment. When `STORE_ADDR` is empty, `storage.Open` opens the BoltDB file with mode `0600` and waits up to one second for the file lock, then creates both buckets. When `STORE_ADDR` is set, the API dials that address and the store process is the one that opens the file. The HTTP server uses a 5 second read-header timeout. On SIGINT or SIGTERM the process stops accepting new connections and waits up to 10 seconds for in-flight requests. The store process stops the gRPC server the same way.
 
 BoltDB serializes writes inside the process: one read-write transaction at a time, and many read-only transactions. The rate-limit map uses one mutex, and the bucket update runs while that lock is held.
 
 ## Limitations
 
-These follow from BoltDB and from state that lives in the process. They show up as soon as more than one replica is running.
+These follow from BoltDB and from state that lives in the process.
 
 ### One file, one writer
 
 bbolt v1.5.0 takes an exclusive lock on a read-write `Open`. A second process that opens the same file for writing would update the meta pages and the free pages on its own and corrupt the file, so the library refuses that open. This service's `Open` times out after one second.
 
-Read-only mode (`Options.ReadOnly`) uses a shared lock so several processes can read one frozen file. While they hold it, no process can open that file for writing, and a process that already has it open for writing blocks the readers. This API creates, updates, and deletes on every replica, so read-only mode does not produce one shared live dataset.
+The Kubernetes install keeps that lock inside one process. `todo-store` is a single replica, mounts the PVC, and serves `todo.Repository` over gRPC. The API Deployment has two replicas and does not mount the database file. Both replicas call `STORE_ADDR`, so they read and write the same dataset, including idempotency keys.
 
-A lockfile in front of BoltDB only chooses which single process may open the file. The other replicas still cannot read or write it. Sharing the path through a volume does not remove the lock. Each replica needs its own file. The files are not replicated and are not merged.
+`store-server` is still a single writer. A restart pauses writes until that pod is Ready again. The PVC keeps the file across that restart. Adding another store replica against the same file brings the exclusive lock back.
 
-### Replicas diverge
+Read-only mode (`Options.ReadOnly`) uses a shared lock so several processes can read one frozen file. While they hold it, no process can open that file for writing, and a process that already has it open for writing blocks the readers. This API creates, updates, and deletes, so read-only mode does not produce one shared live dataset.
 
-The Service can send each request to a different pod.
-
-- A create stored on one pod is missing from a list on the other.
-- An update or delete can return 404 because that pod never stored the id.
-- The same `Idempotency-Key` on two pods inserts two items, with two public ids. A replay returns the original item only when it reaches the pod that stored the key.
-- `NextSequence` starts at 1 in each file. Clients do not see those numbers. The two files are still separate sequences.
-
-### Deployment with a shared PVC
-
-The challenge asks for a Deployment with two replicas. The manifests also mount one ReadWriteOnce PVC (`todo-service-data`) at `/data` for `DB_PATH=/data/todos.db`.
-
-That combination does not give two healthy writers:
-
-- BoltDB allows only one process to open the file for writing. The second Pod's `Open` times out after one second.
-- Readiness then fails on that Pod (`/readyz` → 503), so it stays out of the Service endpoints or flaps while the Deployment restarts it.
-- On a single-node cluster such as Docker Desktop, both Pods can often mount the same RWO volume. The file lock still blocks the second opener. On a multi-node cluster, RWO usually schedules only one Pod on the node that holds the volume; the other Pod may stay Pending.
-- The PVC does keep the database file across a Pod restart for whichever replica successfully opens it. It does not create a shared, consistent dataset for two running replicas.
-
-Honest options for a later version: one replica, a StatefulSet with one PVC per Pod (still divergent state), or a client/server database that accepts many writers. This install keeps `replicas: 2` as required and documents the limitation instead of silently dropping to one replica.
+A lockfile in front of BoltDB only chooses which single process may open the file. The other replicas still cannot read or write it.
 
 ### Kubernetes objects
 
-Shared manifests live in `deployments/k8s/base/`. Each overlay owns its `Namespace` (`namespace.yaml`) and sets `namespace:` to the same name, plus an `environment` label and resource patches (development is smaller than production). Resource names stay `todo-service` (and friends); environments are separated by namespace:
+Shared API manifests live in `deployments/k8s/base/api/`. Shared store manifests live in `deployments/k8s/base/store/`. Allow rules that both environments share live in `deployments/k8s/components/`. Each overlay is one kustomization: the namespace, both bases, those components, and the values that differ (`PATH_PREFIX`, the ingress path, and resource requests). Resource names stay `todo-service` for the API and `todo-store` for the database.
 
 | Overlay | Apply | Namespace |
 | --- | --- | --- |
 | Development | `kubectl apply -k deployments/k8s/overlays/development/` | `development` |
 | Production | `kubectl apply -k deployments/k8s/overlays/production/` | `production` |
 
-Build the image as `todo-service:dev` for Docker Desktop before applying.
+Build the API image as `todo-service:v1.0.0` from `Dockerfile`, and the store image as `store-server:v1.0.0` from `Dockerfile.store`.
 
-| Object (base name) | Purpose |
+| Object | Purpose |
 | --- | --- |
-| Namespace (overlay) | `development` or `production`, created by that overlay’s `namespace.yaml` |
-| ServiceAccount `todo-service` | Pod identity with no Role or ClusterRole bindings; token not auto-mounted |
-| ConfigMap `todo-service` | `PORT`, `LOG_LEVEL`, and `DB_PATH` |
-| PersistentVolumeClaim `todo-service-data` | 1Gi RWO volume mounted at `/data` |
-| Deployment `todo-service` | Two replicas, resource requests/limits, liveness `/livez`, readiness `/readyz`, shared PVC |
-| Service `todo-service` | LoadBalancer port 80 → container port 8080 |
-| Ingress `todo-service` | HTTP under `/dev` (development) or `/prod` (production); nginx rewrites to the app paths |
-| NetworkPolicy `todo-service-deny-all` | Base denies all traffic; overlays allow TCP 8080 from the `ingress-nginx` namespace |
+| Namespace (overlay) | `development` or `production`, from that overlay’s `namespace.yaml` |
+| ServiceAccount `todo-service` | API pod identity with no Role or ClusterRole bindings; token not auto-mounted |
+| ServiceAccount `todo-store` | Store pod identity, same constraints |
+| ConfigMap `todo-service` | `PORT`, `LOG_LEVEL`, and `STORE_ADDR` |
+| ConfigMap `todo-store` | `GRPC_ADDR`, `LOG_LEVEL`, and `DB_PATH` |
+| PersistentVolume `todo-store-data-<namespace>` | Host directory `todo-service/data/<namespace>`, kept when the overlay is deleted |
+| PersistentVolumeClaim `todo-store-data` | Binds that volume and mounts it at `/data` on the store pod |
+| Deployment `todo-service` | Two replicas, no volume, liveness `/livez`, readiness `/readyz` |
+| Deployment `todo-store` | One replica, the PVC, image `store-server` |
+| Service `todo-service` | ClusterIP port 8080 → container port 8080. This Service does not strip `/dev` or `/prod` |
+| Ingress `todo-service` | `/dev` (development) or `/prod` (production) is rewritten away before the API. The Service port is 8080 |
+| Service `todo-store` | ClusterIP port 50051 → the store container |
+| NetworkPolicy `todo-service-deny-all` | Base denies all traffic. `components/api-networkpolicy` allows TCP 8080 from the `ingress-nginx` namespace and TCP 50051 to `todo-store` |
+| NetworkPolicy `todo-store` | Base denies all traffic. `components/store-networkpolicy` allows TCP 50051 from pods labeled `app: todo-service` |
 
-`GET /readyz` pings the local BoltDB open in that process. A Pod that cannot open the shared file is not ready.
+`GET /readyz` on an API pod pings the store over gRPC when `STORE_ADDR` is set. A store that cannot open BoltDB, or an API that cannot reach it, is not ready.
 
-Base NetworkPolicy denies all ingress and egress. Each overlay patches it so only the nginx Ingress controller (`namespace` labeled `kubernetes.io/metadata.name=ingress-nginx`) may reach the Pods on port 8080. Egress stays denied. LoadBalancer traffic that does not come from that controller, and DNS egress, still need extra rules if you rely on them. The CNI must enforce NetworkPolicy for this to apply.
+The base NetworkPolicies deny all ingress and egress. `components/api-networkpolicy` allows the nginx Ingress controller (`namespace` labeled `kubernetes.io/metadata.name=ingress-nginx`) to reach the API Pods on port 8080, and allows those Pods to dial the store on port 50051. `components/store-networkpolicy` allows TCP 50051 only from pods labeled `app: todo-service`. Other egress, including DNS, still needs extra rules if you rely on it. The CNI must enforce NetworkPolicy for this to apply. Development lowers the API and store container resources with patches; production uses the store resources in `deployments/k8s/base/store/` and sets the API resources in the overlay.
 
 ### Rate limit is per process
 
@@ -145,4 +143,4 @@ The key is the host of `RemoteAddr`. Forwarded headers are ignored. Behind a Ser
 
 ### Idempotency keys do not expire
 
-Keys remain in the `idempotency` bucket for the life of that pod's file. Title validation runs before the key lookup, so a replay whose title is blank is 422 and does not return the stored item.
+Keys remain in the `idempotency` bucket for the life of the store file. Title validation runs before the key lookup, so a replay whose title is blank is 422 and does not return the stored item.

@@ -3,17 +3,19 @@ kind: Kustomization
 namespace: production
 labels:
   - pairs:
-      app: todo-service
       environment: production
     includeSelectors: true
     includeTemplates: true
 resources:
   - namespace.yaml
-  - ../../base
+  - ../../base/api
+  - ../../base/store
+  - store-pv.yaml
+components:
+  - ../../components/api-networkpolicy
+  - ../../components/store-networkpolicy
 patches:
-  - path: deployment-patch.yaml
-  - path: ingress-patch.yaml
-  - path: networkpolicy-patch.yaml
-
-
-
+  - path: api-ingress.yaml
+  - path: api-configmap.yaml
+  - path: api-resources.yaml
+  - path: store-pvc.yaml
