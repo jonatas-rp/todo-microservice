@@ -28,7 +28,28 @@ docker build -f Dockerfile.store -t store-server:v1.0.0 .
 
 ## Kubernetes
 
-Use the `docker-desktop` context. Apply one overlay per environment:
+The API Service in each environment is a ClusterIP. Nothing outside the cluster can reach it until an ingress controller publishes port 80 and rewrites `/dev` and `/prod` away. These overlays use the `nginx` IngressClass and allow traffic only from the `ingress-nginx` namespace.
+
+Use the `docker-desktop` context. Install the controller once per cluster:
+
+```bash
+kubectl config use-context docker-desktop
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/cloud/deploy.yaml
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=120s
+kubectl get svc -n ingress-nginx ingress-nginx-controller
+```
+
+On Docker Desktop the Service's external address is `localhost`, so the API is reached at `http://localhost/dev` and `http://localhost/prod`.
+
+Before applying an overlay, set `spec.hostPath.path` in that environment's store volume:
+
+- `deployments/k8s/overlays/development/store-pv.yaml`
+- `deployments/k8s/overlays/production/store-pv.yaml`
+
+Then apply one overlay per environment:
 
 ```bash
 kubectl apply -k deployments/k8s/overlays/development
@@ -40,7 +61,6 @@ kubectl apply -k deployments/k8s/overlays/production
 | Development | `http://localhost/dev/v1/todos` | `http://localhost/dev/v1/docs/` |
 | Production | `http://localhost/prod/v1/todos` | `http://localhost/prod/v1/docs/` |
 
-The store file for each environment is on the Windows host and is visible in this repo at `data/development` and `data/production`. That directory is gitignored.
 
 ## Documentation
 
