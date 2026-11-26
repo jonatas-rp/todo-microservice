@@ -44,10 +44,16 @@ kubectl get svc -n ingress-nginx ingress-nginx-controller
 
 On Docker Desktop the Service's external address is `localhost`, so the API is reached at `http://localhost/dev` and `http://localhost/prod`.
 
-Before applying an overlay, set `spec.hostPath.path` in that environment's store volume:
+Set `spec.hostPath.path` in `deployments/k8s/overlays/development/store-pv.yaml` and `deployments/k8s/overlays/production/store-pv.yaml` before applying. Docker Desktop cannot mount an Ubuntu home path. Use a separate directory per environment under `/run/desktop/mnt/host/`: a Windows drive (`.../c/Users/<you>/...`) survives a restart, and `/run/desktop/mnt/host/wsl` (Ubuntu's `/mnt/wsl`) is cleared when WSL stops.
 
-- `deployments/k8s/overlays/development/store-pv.yaml`
-- `deployments/k8s/overlays/production/store-pv.yaml`
+The store runs as user `65532`, and a hostPath is not made writable by `fsGroup`. Create the directory first or `store-server` exits with `open /data/todos.db: permission denied`:
+
+```bash
+mkdir -p /mnt/wsl/todo-service/development /mnt/wsl/todo-service/production
+chmod 0777 /mnt/wsl/todo-service/development /mnt/wsl/todo-service/production
+```
+
+Set the volume paths to `/run/desktop/mnt/host/wsl/todo-service/development` and `.../production`. If the pod already created the directory, `chmod` it and delete the pod.
 
 Then apply one overlay per environment:
 
