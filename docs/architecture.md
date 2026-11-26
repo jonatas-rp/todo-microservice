@@ -1,6 +1,6 @@
 # Architecture
 
-The to-do service runs as two processes in Kubernetes. `api-server` serves the JSON HTTP API. `store-server` is the only process that opens the BoltDB file, and every API replica calls it over gRPC. Without `STORE_ADDR`, `api-server` still opens BoltDB itself for local runs and tests. Decisions are recorded in [adr/](adr/README.md).
+The to-do service runs as two processes. `api-server` serves the JSON HTTP API and always dials the store. `store-server` is the only process that opens the BoltDB file. Decisions are recorded in [adr/](adr/README.md).
 
 ## Packages
 
@@ -8,9 +8,9 @@ Dependencies point inward. `internal/todo` does not import HTTP, BoltDB, or gRPC
 
 | Package | Role |
 | --- | --- |
-| `cmd/api-server` | Load config, open the local database or dial the store, build the service, limiter, and handler, shut down on SIGINT or SIGTERM |
+| `cmd/api-server` | Load config, dial the store, build the service, limiter, and handler, shut down on SIGINT or SIGTERM |
 | `cmd/store-server` | Open BoltDB, serve the gRPC store, stop gracefully on SIGINT or SIGTERM |
-| `internal/config` | API: `PORT` (default `8080`), `LOG_LEVEL`, optional `STORE_ADDR`. Store: `GRPC_ADDR` (default `:50051`), `DB_PATH` (default `todos.db`) |
+| `internal/config` | API: `PORT` (default `8080`), `LOG_LEVEL`, `STORE_ADDR`, optional `PATH_PREFIX`. Store: `GRPC_ADDR` (default `:50051`), `DB_PATH` (default `todos.db`) |
 | `internal/todo` | `Todo`, title checks, `Repository` port, use cases |
 | `internal/storage` | BoltDB adapter for `todo.Repository`, and the in-memory adapter for `ratelimit.Store` |
 | `internal/store/pb` | Generated gRPC messages |
@@ -22,7 +22,7 @@ Dependencies point inward. `internal/todo` does not import HTTP, BoltDB, or gRPC
 
 ```text
 cmd/api-server
-  → config, logger, storage or store/client, ratelimit, todo, httpapi
+  → config, logger, store/client, ratelimit, todo, httpapi
 cmd/store-server
   → config, logger, storage, store/server
 store/client
@@ -43,7 +43,7 @@ todo
 
 `NewHandler` registers routes on `net/http` ServeMux, then wraps the mux from the outside in:
 
-1. `requestLog` assigns `X-Request-ID` with `uuid.NewString()`, stores a new logger in the request context, and logs the matched route pattern.
+1. `requestLog` assigns `X-Request-ID` with `uuid.NewString()`, stores that id on the request context under `"request_id"`, stores a new logger in the request context, and logs the matched route pattern. The store client copies the id onto each gRPC call.
 2. `rateLimit` charges the token bucket for the host of `RemoteAddr`. `GET /livez`, `GET /readyz`, and `/v1/docs/` are not charged.
 3. `recoverPanic` turns a panic into a 500 problem response. `http.ErrAbortHandler` is re-panicked.
 4. `problemFallback` replaces ServeMux's plain-text 404 and 405 bodies and keeps the `Allow` header.
@@ -59,6 +59,8 @@ todo
 | GET | `/livez` | 200 when the process is running |
 | GET | `/readyz` | 200 when both BoltDB buckets exist. 503 when storage is missing or the ping fails |
 | GET | `/health` | 200 process check. This route is rate limited |
+
+`PATH_PREFIX` (`/dev` or `/prod` behind the ingress, empty for a direct client) is written into the Swagger UI asset URLs and the OpenAPI `servers` entry. The UI stays mounted at `/v1/docs/`. The ingress strips the prefix before the process sees the request, so the browser requests those assets with the prefix still on the URL.
 
 Success bodies are `application/json`:
 
@@ -83,7 +85,7 @@ The file has two buckets. `todos` is keyed by the public id and stores `id`, `pu
 
 ## Process
 
-`config.Load` reads the environment. When `STORE_ADDR` is empty, `storage.Open` opens the BoltDB file with mode `0600` and waits up to one second for the file lock, then creates both buckets. When `STORE_ADDR` is set, the API dials that address and the store process is the one that opens the file. The HTTP server uses a 5 second read-header timeout. On SIGINT or SIGTERM the process stops accepting new connections and waits up to 10 seconds for in-flight requests. The store process stops the gRPC server the same way.
+`config.Load` reads the environment. The API process dials `STORE_ADDR`. The store process opens the BoltDB file with mode `0600`, waits up to one second for the file lock, and creates both buckets. The HTTP server uses a 5 second read-header timeout. On SIGINT or SIGTERM the API marks itself unready, stops accepting new connections, and waits up to 10 seconds for in-flight requests. The store process stops the gRPC server the same way.
 
 BoltDB serializes writes inside the process: one read-write transaction at a time, and many read-only transactions. The rate-limit map uses one mutex, and the bucket update runs while that lock is held.
 
@@ -112,16 +114,16 @@ Shared API manifests live in `deployments/k8s/base/api/`. Shared store manifests
 | Development | `kubectl apply -k deployments/k8s/overlays/development/` | `development` |
 | Production | `kubectl apply -k deployments/k8s/overlays/production/` | `production` |
 
-Build the API image as `todo-service:v1.0.0` from `Dockerfile`, and the store image as `store-server:v1.0.0` from `Dockerfile.store`.
+Build the API image as `todo-service:v1.0.0` from `Dockerfile.todoserver`, and the store image as `store-server:v1.0.0` from `Dockerfile.store`.
 
 | Object | Purpose |
 | --- | --- |
 | Namespace (overlay) | `development` or `production`, from that overlay’s `namespace.yaml` |
 | ServiceAccount `todo-service` | API pod identity with no Role or ClusterRole bindings; token not auto-mounted |
 | ServiceAccount `todo-store` | Store pod identity, same constraints |
-| ConfigMap `todo-service` | `PORT`, `LOG_LEVEL`, and `STORE_ADDR` |
+| ConfigMap `todo-service` | `PORT`, `LOG_LEVEL`, `STORE_ADDR`, and the overlay’s `PATH_PREFIX` |
 | ConfigMap `todo-store` | `GRPC_ADDR`, `LOG_LEVEL`, and `DB_PATH` |
-| PersistentVolume `todo-store-data-<namespace>` | Host directory `todo-service/data/<namespace>`, kept when the overlay is deleted |
+| PersistentVolume `todo-store-data-<namespace>` | Static hostPath `/run/desktop/mnt/host/c/Users/jorp5/arancia-todo-data/<namespace>`, class `manual`, reclaim `Retain`. WSL reads it through the gitignored `data` symlink |
 | PersistentVolumeClaim `todo-store-data` | Binds that volume and mounts it at `/data` on the store pod |
 | Deployment `todo-service` | Two replicas, no volume, liveness `/livez`, readiness `/readyz` |
 | Deployment `todo-store` | One replica, the PVC, image `store-server` |
@@ -131,7 +133,9 @@ Build the API image as `todo-service:v1.0.0` from `Dockerfile`, and the store im
 | NetworkPolicy `todo-service-deny-all` | Base denies all traffic. `components/api-networkpolicy` allows TCP 8080 from the `ingress-nginx` namespace and TCP 50051 to `todo-store` |
 | NetworkPolicy `todo-store` | Base denies all traffic. `components/store-networkpolicy` allows TCP 50051 from pods labeled `app: todo-service` |
 
-`GET /readyz` on an API pod pings the store over gRPC when `STORE_ADDR` is set. A store that cannot open BoltDB, or an API that cannot reach it, is not ready.
+`GET /readyz` on an API pod pings the store over gRPC. A store that cannot open BoltDB exits before it listens. An API that cannot reach the store fails readiness and stays running. Liveness stays on `/livez` for the API and on TCP 50051 for the store.
+
+`kubectl delete -k` on an overlay deletes that namespace and both workloads. The BoltDB file stays in the host directory. The store claim is ReadWriteOnce, and the store Deployment rolls with `maxSurge: 1` and `maxUnavailable: 0`, so the new pod mounts the volume after the old pod releases it.
 
 The base NetworkPolicies deny all ingress and egress. `components/api-networkpolicy` allows the nginx Ingress controller (`namespace` labeled `kubernetes.io/metadata.name=ingress-nginx`) to reach the API Pods on port 8080, and allows those Pods to dial the store on port 50051. `components/store-networkpolicy` allows TCP 50051 only from pods labeled `app: todo-service`. Other egress, including DNS, still needs extra rules if you rely on it. The CNI must enforce NetworkPolicy for this to apply. Development lowers the API and store container resources with patches; production uses the store resources in `deployments/k8s/base/store/` and sets the API resources in the overlay.
 
