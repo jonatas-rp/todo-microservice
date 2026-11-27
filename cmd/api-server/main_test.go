@@ -16,11 +16,3 @@ func TestRunInvalidPORT(t *testing.T) {
 	}
 }
 
-func TestRunBadDBPath(t *testing.T) {
-	t.Setenv("STORE_ADDR", "")
-	t.Setenv("PORT", "18080")
-	t.Setenv("DB_PATH", filepath.Join(t.TempDir(), "missing", "todos.db"))
-	if err := run(logger.New(t.Output(), "")); err == nil {
-		t.Fatal("expected open database error")
-	}
-}

@@ -15,7 +15,10 @@ func TestAllowBurstAndRefill(t *testing.T) {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	if !lim.Allow("203.0.113.7", now) {
-		t.Fatal("burst of 2 was denied")
+		t.Fatal("first request denied")
+	}
+	if !lim.Allow("203.0.113.7", now) {
+		t.Fatal("second request denied")
 	}
 	if lim.Allow("203.0.113.7", now) {
 		t.Fatal("third request was allowed")
@@ -41,7 +44,10 @@ func TestAllowRefillCapsAtCapacity(t *testing.T) {
 	}
 	later := now.Add(time.Hour)
 	if !lim.Allow("203.0.113.7", later) {
-		t.Fatal("refill did not restore capacity")
+		t.Fatal("refilled token was denied")
+	}
+	if !lim.Allow("203.0.113.7", later) {
+		t.Fatal("second refilled token was denied")
 	}
 	if lim.Allow("203.0.113.7", later) {
 		t.Fatal("allowed more than capacity after a long wait")
